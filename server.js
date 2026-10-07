@@ -13,6 +13,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 const PORT = process.env.PORT || 3000;
 const CURRENCY = process.env.CURRENCY || 'USD';
+const APP_URL = (process.env.APP_URL || `http://localhost:${PORT}`).replace(/\/$/, '');
 
 // small helper so every route can just throw
 const route = (fn) => (req, res) =>
@@ -103,10 +104,27 @@ app.post('/api/gigs/:id/order', route(async (req, res) => {
     amount: gig.amount,
     currency: gig.currency,
     payeeEmail: gig.freelancerEmail,
+    returnUrl: `${APP_URL}/paypal/return?gig=${gig.id}`,
+    cancelUrl: `${APP_URL}/gig/${gig.id}`,
   });
-  gig.paypal = { ...(gig.paypal || {}), orderId: order.id };
+  const approveUrl = (order.links || []).find((l) => l.rel === 'payer-action' || l.rel === 'approve')?.href || null;
+  gig.paypal = { ...(gig.paypal || {}), orderId: order.id, approveUrl };
   store.put(gig);
-  res.json({ id: order.id });
+  res.json({ id: order.id, approveUrl });
+}));
+
+// redirect flow: PayPal sends the buyer back here after approving (used when the
+// popup is blocked, or from the "pay on PayPal page" link)
+app.get('/paypal/return', route(async (req, res) => {
+  const gig = mustGig(String(req.query.gig || ''));
+  if (gig.status === 'draft') {
+    const auth = await paypal.authorizeOrder(String(req.query.token || gig.paypal?.orderId));
+    gig.paypal = { ...gig.paypal, ...auth };
+    gig.status = 'funded';
+    store.log(gig, 'paypal', `Held ${gig.currency} ${gig.amount} on the client's PayPal (authorization ${auth.authorizationId}). Nothing charged yet.`);
+    store.put(gig);
+  }
+  res.redirect(`/gig/${gig.id}`);
 }));
 
 app.post('/api/gigs/:id/authorize', route(async (req, res) => {
