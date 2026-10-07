@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Fairshake — pay for the work you actually got</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <a class="logo" href="/">fair<span>shake</span></a>
+    <div class="modes" id="modes"></div>
+  </header>
+
+  <h1>Hold the money. Check the work.<br>Pay for what was delivered.</h1>
+  <p class="lede">
+    Small freelance jobs usually end in one of two bad ways: the client pays upfront and hopes,
+    or the freelancer works first and hopes. Fairshake puts the money on hold with PayPal,
+    lets an AI reviewer check the delivery line by line against the brief, and then captures
+    only the part that was actually done. The rest goes back automatically.
+  </p>
+
+  <div class="how">
+    <div><b>1. Agree</b>Paste the brief. AI turns it into a weighted checklist you both can see.</div>
+    <div><b>2. Hold</b>Client approves in PayPal. Funds are authorized, not charged.</div>
+    <div><b>3. Deliver</b>Freelancer pastes the work or a link. AI checks each item with evidence.</div>
+    <div><b>4. Settle</b>Client confirms. PayPal captures the earned share, voids the rest.</div>
+  </div>
+
+  <div class="card">
+    <div class="spread">
+      <h2>Start a gig</h2>
+      <button class="link" id="example" type="button">Fill with an example</button>
+    </div>
+    <form id="new">
+      <div class="field">
+        <label for="title">What's the job?</label>
+        <input id="title" name="title" required maxlength="120" placeholder="Landing page copy for a home bakery">
+      </div>
+      <div class="field">
+        <label for="brief">The brief <span class="hint">(write it like you'd message the freelancer)</span></label>
+        <textarea id="brief" name="brief" required rows="6"></textarea>
+      </div>
+      <div class="grid2">
+        <div class="field">
+          <label for="amount">Budget (<span id="cur">USD</span>)</label>
+          <input id="amount" name="amount" type="number" min="1" max="10000" step="0.01" required value="120">
+        </div>
+        <div class="field">
+          <label for="dueDate">Due date <span class="hint">(optional)</span></label>
+          <input id="dueDate" name="dueDate" type="date">
+        </div>
+        <div class="field">
+          <label for="clientName">Your name</label>
+          <input id="clientName" name="clientName" placeholder="Priya">
+        </div>
+        <div class="field">
+          <label for="freelancerName">Freelancer's name</label>
+          <input id="freelancerName" name="freelancerName" placeholder="Rahul">
+        </div>
+      </div>
+      <div class="field">
+        <label for="freelancerEmail">Freelancer's PayPal email <span class="hint">(sandbox business account; payment goes straight to them)</span></label>
+        <input id="freelancerEmail" name="freelancerEmail" type="email" placeholder="leave empty to collect into the app's own sandbox account">
+      </div>
+      <button class="green" type="submit" id="create">Draft the checklist</button>
+    </form>
+  </div>
+
+  <div class="card giglist" id="list">
+    <h2>Your gigs</h2>
+    <p class="muted small" id="empty">Nothing yet.</p>
+  </div>
+
+  <p class="muted small">Built for the PayPal AI Hackathon 2026. Runs on the PayPal sandbox, no real money moves.</p>
+</div>
+
+<script src="/common.js"></script>
+<script>
+const EXAMPLE = {
+  title: 'Landing page copy for a home bakery',
+  brief: `Hi! I run a small home bakery in Thane called Crumb & Co. I need the text for a one page website.
+- A headline and a short line under it that says we bake fresh to order, nothing sits overnight
+- An "about us" section, around 100 words, warm tone, mention it's run by a mother and daughter
+- A menu section with our 5 best sellers and prices (I'll send prices, use placeholders for now)
+- How to order: WhatsApp only, 24 hours notice, delivery inside Thane West
+- 3 short FAQ answers: eggless options, custom cakes, payment methods
+Keep it simple English, no fancy words. My customers are mostly local families.`,
+  amount: 120,
+  clientName: 'Priya',
+  freelancerName: 'Rahul',
+};
+
+$('#example').onclick = () => {
+  for (const [k, v] of Object.entries(EXAMPLE)) $('#' + k).value = v;
+};
+
+$('#new').onsubmit = (e) => {
+  e.preventDefault();
+  const body = Object.fromEntries(new FormData(e.target));
+  busy($('#create'), async () => {
+    const gig = await api('/gigs', { body });
+    location.href = '/gig/' + gig.id;
+  }, 'Reading the brief…');
+};
+
+async function refresh() {
+  const gigs = await api('/gigs');
+  if (!gigs.length) return;
+  $('#empty').remove();
+  $('#list').insertAdjacentHTML('beforeend', gigs.map((g) => `
+    <a class="gig" href="/gig/${g.id}">
+      <span><strong>${esc(g.title)}</strong><br>
+        <span class="muted small">${esc(g.clientName)} → ${esc(g.freelancerName)} · ${when(g.createdAt)}</span></span>
+      <span style="text-align:right">${fmt(g.amount, g.currency)}<br><span class="status ${g.status}">${g.status.replace('_', ' ')}</span></span>
+    </a>`).join(''));
+}
+
+loadConfig().then((c) => { $('#cur').textContent = c.currency; });
+refresh();
+</script>
+</body>
+</html>
