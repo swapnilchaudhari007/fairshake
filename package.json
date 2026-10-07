@@ -1,0 +1,20 @@
+{
+  "name": "fairshake",
+  "version": "1.0.0",
+  "description": "Hold the money, check the work, pay for what was delivered. PayPal authorize + partial capture, with an AI reviewer that grades each deliverable against the brief.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "node test/flow.test.js"
+  },
+  "keywords": ["paypal", "escrow", "freelance", "ai", "hackathon"],
+  "author": "Swapnil Chaudhari",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  }
+}
