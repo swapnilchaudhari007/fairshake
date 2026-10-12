@@ -1,0 +1,33 @@
+name: 🐛 Bug report
+description: Report something broken in Fairshake
+title: '[Bug]: '
+labels:
+- bug
+body:
+- type: input
+  id: area
+  attributes:
+    label: Affected area
+    description: e.g. PayPal escrow & payouts, AI work review, Milestones / scope
+  validations:
+    required: true
+- type: textarea
+  id: what
+  attributes:
+    label: What happened?
+    description: What did you expect, and what happened instead?
+  validations:
+    required: true
+- type: textarea
+  id: steps
+  attributes:
+    label: Steps to reproduce
+    placeholder: "1. \n2. \n3. "
+  validations:
+    required: true
+- type: textarea
+  id: logs
+  attributes:
+    label: Logs or screenshots
+    description: Remove keys, tokens and personal data first.
+    render: shell
