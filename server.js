@@ -3,6 +3,7 @@ require('./lib/env').loadEnv();
 const express = require('express');
 const path = require('path');
 const net = require('net');
+const dns = require('dns').promises;
 const store = require('./lib/store');
 const paypal = require('./lib/paypal');
 const ai = require('./lib/ai');
@@ -84,7 +85,8 @@ app.post('/api/gigs', route(async (req, res) => {
 app.put('/api/gigs/:id/criteria', route(async (req, res) => {
   const gig = mustGig(req.params.id);
   mustBe(gig, 'draft');
-  const list = (req.body.criteria || [])
+  const raw = Array.isArray(req.body?.criteria) ? req.body.criteria : [];
+  const list = raw
     .map((c) => ({ text: String(c.text || '').trim().slice(0, 200), weight: Math.max(1, Math.round(Number(c.weight) || 1)) }))
     .filter((c) => c.text);
   if (!list.length) throw bad('Need at least one checklist item');
@@ -130,7 +132,7 @@ app.get('/paypal/return', route(async (req, res) => {
 app.post('/api/gigs/:id/authorize', route(async (req, res) => {
   const gig = mustGig(req.params.id);
   mustBe(gig, 'draft');
-  const orderId = req.body.orderId || gig.paypal?.orderId;
+  const orderId = req.body?.orderId || gig.paypal?.orderId;
   if (!orderId) throw bad('No PayPal order to authorize');
   const auth = await paypal.authorizeOrder(orderId);
   gig.paypal = { ...gig.paypal, ...auth };
@@ -145,7 +147,7 @@ app.post('/api/gigs/:id/deliver', route(async (req, res) => {
   const gig = mustGig(req.params.id);
   mustBe(gig, 'funded', 'changes_requested');
   const { note = '', content = '', link = '' } = req.body || {};
-  if (!content.trim() && !link.trim()) throw bad('Paste the work or add a link');
+  if (!String(content).trim() && !String(link).trim()) throw bad('Paste the work or add a link');
 
   const delivery = {
     id: store.newId('dlv'),
@@ -184,7 +186,7 @@ app.post('/api/gigs/:id/review', route(async (req, res) => {
 app.post('/api/gigs/:id/request-changes', route(async (req, res) => {
   const gig = mustGig(req.params.id);
   mustBe(gig, 'delivered');
-  const msg = String(req.body.message || '').trim().slice(0, 1000);
+  const msg = String(req.body?.message || '').trim().slice(0, 1000);
   gig.status = 'changes_requested';
   gig.changeRequest = { at: new Date().toISOString(), message: msg, missing: (gig.review?.items || []).filter((i) => i.verdict !== 'met').map((i) => i.id) };
   store.log(gig, 'client', `Asked for changes${msg ? `: "${msg}"` : ''}`);
@@ -199,7 +201,7 @@ app.post('/api/gigs/:id/release', route(async (req, res) => {
   if (!gig.review) throw bad('Run the review first');
 
   // client may override individual verdicts; we keep a record of every change
-  const overrides = req.body.verdicts || {};
+  const overrides = req.body?.verdicts || {};
   const finalItems = gig.review.items.map((it) => {
     const v = overrides[it.id];
     if (v && v !== it.verdict && ai.VERDICT_SCORE[v] !== undefined) {
@@ -211,7 +213,7 @@ app.post('/api/gigs/:id/release', route(async (req, res) => {
   const pct = ai.payoutPercent(gig.criteria, finalItems);
   const payAmount = Number(paypal.money((gig.amount * pct) / 100));
   const returned = Number(paypal.money(gig.amount - payAmount));
-  const message = String(req.body.message || '').slice(0, 255);
+  const message = String(req.body?.message || '').slice(0, 255);
 
   let result;
   if (payAmount < 0.01) {
@@ -236,19 +238,45 @@ app.post('/api/gigs/:id/release', route(async (req, res) => {
 
 // ---------- helpers ----------
 
+// true for loopback, private, link-local, CGNAT and unique-local addresses (v4 + v6)
+function isPrivateIp(ip) {
+  if (ip.startsWith('::ffff:')) ip = ip.slice(7);
+  if (net.isIPv4(ip)) {
+    const [a, b] = ip.split('.').map(Number);
+    return a === 0 || a === 10 || a === 127 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127);
+  }
+  const v6 = ip.toLowerCase();
+  return v6 === '::' || v6 === '::1' || /^f[cd]/.test(v6) || /^fe[89ab]/.test(v6);
+}
+
+async function assertPublicHost(hostname) {
+  const host = hostname.replace(/^\[|\]$/g, '');
+  if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local')) {
+    throw new Error('Private addresses are not allowed');
+  }
+  const addrs = net.isIP(host) ? [host] : (await dns.lookup(host, { all: true })).map((a) => a.address);
+  if (!addrs.length || addrs.some(isPrivateIp)) throw new Error('Private addresses are not allowed');
+}
+
 async function fetchReadable(link) {
   let url;
   try { url = new URL(link); } catch { throw new Error('Not a valid URL'); }
-  if (!/^https?:$/.test(url.protocol)) throw new Error('Only http(s) links');
-  const host = url.hostname;
-  // don't let a delivery link poke at our own network
-  if (host === 'localhost' || host.endsWith('.local') || (net.isIP(host) && /^(10\.|127\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|0\.|::1|fc|fd)/.test(host))) {
-    throw new Error('Private addresses are not allowed');
-  }
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), 8000);
   try {
-    const r = await fetch(url, { signal: ctrl.signal, headers: { 'User-Agent': 'Fairshake-reviewer/1.0' } });
+    // follow redirects by hand so every hop gets the private-address check
+    let r;
+    for (let hop = 0; ; hop++) {
+      if (!/^https?:$/.test(url.protocol)) throw new Error('Only http(s) links');
+      // don't let a delivery link poke at our own network
+      await assertPublicHost(url.hostname);
+      r = await fetch(url, { signal: ctrl.signal, redirect: 'manual', headers: { 'User-Agent': 'Fairshake-reviewer/1.0' } });
+      const next = r.status >= 300 && r.status < 400 && r.headers.get('location');
+      if (!next) break;
+      if (hop >= 5) throw new Error('Too many redirects');
+      url = new URL(next, url);
+    }
     if (!r.ok) throw new Error(`Link returned ${r.status}`);
     const raw = (await r.text()).slice(0, 400000);
     return raw
@@ -274,3 +302,4 @@ if (require.main === module) {
 }
 
 module.exports = app;
+module.exports.isPrivateIp = isPrivateIp;
