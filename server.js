@@ -21,7 +21,7 @@ const route = (fn) => (req, res) =>
   Promise.resolve(fn(req, res)).catch((e) => {
     if (!e.status || e.status >= 500) console.error(e);
     else console.warn(`${req.method} ${req.path}: ${e.message}`);
-    res.status(e.status && e.status < 500 ? 400 : 500).json({ error: e.message, debugId: e.debugId });
+    res.status(e.status && e.status < 500 ? e.status : 500).json({ error: e.message, debugId: e.debugId });
   });
 
 const bad = (msg) => Object.assign(new Error(msg), { status: 400 });
