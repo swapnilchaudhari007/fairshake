@@ -34,6 +34,10 @@ const app = require('../server');
     assert.equal(g.status, 'funded');
     assert.ok(g.paypal.authorizationId);
 
+    // unknown gig is a 404, not a generic 400
+    const missing = await fetch(`${base}/gigs/gig_does_not_exist`);
+    assert.equal(missing.status, 404);
+
     // can't edit the checklist after funding
     await assert.rejects(call(`/gigs/${g.id}/criteria`, { criteria: [{ text: 'x', weight: 100 }] }, 'PUT'));
 
